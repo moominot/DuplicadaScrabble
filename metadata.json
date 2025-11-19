@@ -1,5 +1,5 @@
 {
-  "name": "Scrabble Duplicat Cat",
+  "name": "Scrabble DupliCat",
   "description": "Aplicació de Scrabble Duplicat en temps real amb suport per a dígrafs catalans i validació AI.",
   "requestFramePermissions": []
 }

@@ -157,7 +157,7 @@ export const calculateMoveScore = (
   let wordMultiplier = 1;
   let tilesUsedFromRack = 0;
   
-  const rackAvailable = [...currentRack]; 
+  const rackAvailable = [...(currentRack || [])]; 
 
   for (let i = 0; i < tiles.length; i++) {
     const r = direction === 'H' ? startRow : startRow + i;
@@ -248,7 +248,7 @@ export const calculateRemainingBag = (board: BoardCell[][], currentRack: string[
     }
 
     // 2. Add current rack usage
-    for (const char of currentRack) {
+    for (const char of (currentRack || [])) {
         const key = char === '?' ? '?' : char.toUpperCase();
         usedCounts[key] = (usedCounts[key] || 0) + 1;
     }

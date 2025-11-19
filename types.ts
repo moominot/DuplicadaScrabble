@@ -30,23 +30,36 @@ export interface Tile {
 
 export interface PlayerMove {
   id: string;
-  playerName: string;
+  playerId: string; // Identificador únic (ex: "table_1")
+  playerName: string; // Nom visible del jugador
+  tableNumber: string; // Número de taula
   word: string; // Raw input string
   tiles: Tile[]; // Parsed tiles
   row: number; // 0-14
   col: number; // 0-14
   direction: 'H' | 'V';
-  score: number; // Puntuació calculada
+  score?: number; // Opcional: El jugador no l'envia, el calcula el Màster
   timestamp: number; // Hora exacta de l'enviament
   roundNumber: number; // Ronda a la qual pertany la jugada
-  isMasterMove?: boolean; // Si és la jugada triada pel master
+  isMasterMove?: boolean; 
+  isValid?: boolean; // Calculat pel màster
+  error?: string;    // Calculat pel màster
+  penalty?: boolean; // Si s'ha enviat fora de temps
+}
+
+export interface Participant {
+    id: string; // table_X
+    name: string;
+    tableNumber: string;
+    totalScore: number;
+    roundScores: Record<number, number>; // { 1: 20, 2: 35 ... }
 }
 
 export interface ArchivedRound {
   roundNumber: number;
   masterMove: PlayerMove;
   rack: string[];
-  boardSnapshot: BoardCell[][]; // Estat del tauler DESPRÉS de la jugada
+  boardSnapshot: BoardCell[][];
   startTime?: number;
   endTime?: number;
 }
@@ -58,15 +71,25 @@ export interface GameConfig {
 
 export interface GameState {
   board: BoardCell[][];
-  currentRack: string[]; // Array of internal chars
+  currentRack: string[];
   status: RoundStatus;
   round: number;
-  moves: PlayerMove[]; // Jugades de la ronda actual
+  
+  // Nova estructura: Participants persistents
+  participants: Record<string, Participant>;
+  
+  // Les jugades es guarden per ronda, però el client les rep aquí per facilitat
+  // (El servei s'encarrega de mapar-ho correctament)
+  moves: PlayerMove[]; 
+  
   lastPlayedMove: PlayerMove | null;
-  history: ArchivedRound[]; // Històric de rondes passades
-  playerScores: Record<string, number>; // Puntuació total acumulada per jugador
+  history: ArchivedRound[]; 
   config: GameConfig;
-  roundStartTime: number | null; 
+  
+  // Timer Synchronization Logic
+  roundStartTime: number | null;
+  timerEndTime: number | null;
+  timerPausedRemaining: number | null;
 }
 
 export const DIGRAPH_MAP: Record<string, string> = {
@@ -81,8 +104,6 @@ export const REVERSE_DIGRAPH_MAP: Record<string, string> = {
   'Ý': 'NY'
 };
 
-// Base values for UPPERCASE (normal) letters. 
-// Lowercase versions in logic are treated as value 0 (Blanks).
 export const LETTER_VALUES: Record<string, number> = {
   'A': 1, 'E': 1, 'I': 1, 'R': 1, 'S': 1, 'N': 1, 'O': 1, 'T': 1, 'L': 1, 'U': 1,
   'C': 2, 'D': 2, 'M': 2,
