@@ -25,13 +25,18 @@ const PlayerView: React.FC = () => {
 
   // Game State
   const [word, setWord] = useState('');
-  const [col, setCol] = useState('H');
-  const [row, setRow] = useState('8');
+  // Default Col to '8' (Center number) and Row to 'H' (Center letter) based on new constants
+  const [col, setCol] = useState('8');
+  const [row, setRow] = useState('H');
   const [direction, setDirection] = useState<'H' | 'V'>('H');
   const [submitted, setSubmitted] = useState(false);
   const [tilesPreview, setTilesPreview] = useState<TileType[]>([]);
   
   const [currentRound, setCurrentRound] = useState(1);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  
+  // Error de validació local (ex: primer torn centre)
+  const [validationError, setValidationError] = useState<string | null>(null);
 
   useEffect(() => {
       if(!gameId) navigate('/');
@@ -44,6 +49,8 @@ const PlayerView: React.FC = () => {
           if (gameState.round > currentRound) {
               setWord('');
               setSubmitted(false);
+              setShowConfirmModal(false);
+              setValidationError(null);
           }
       }
   }, [gameState, currentRound]);
@@ -55,6 +62,7 @@ const PlayerView: React.FC = () => {
       }
       const parsed = parseInputWord(word);
       setTilesPreview(parsed);
+      setValidationError(null); // Netejar error en escriure
   }, [word]);
 
   const handleLogin = (e: React.FormEvent) => {
@@ -90,16 +98,42 @@ const PlayerView: React.FC = () => {
       }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handlePreSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!word || !storedName || !storedTable || !gameId || !gameState) return;
+    if (tilesPreview.length === 0) return;
+
+    // VALIDACIÓ PRIMER TORN: Ha de passar pel centre (Row 7 (H), Col 7 (8))
+    // Nota: Constants ROW_LABELS (A-O) index 7 is H. COL_LABELS (1-15) index 7 is 8.
+    if (currentRound === 1) {
+        const startRowIndex = ROW_LABELS.indexOf(row);
+        const startColIndex = COL_LABELS.indexOf(col);
+        let coversCenter = false;
+
+        for (let i = 0; i < tilesPreview.length; i++) {
+            const r = direction === 'H' ? startRowIndex : startRowIndex + i;
+            const c = direction === 'H' ? startColIndex + i : startColIndex;
+            if (r === 7 && c === 7) {
+                coversCenter = true;
+                break;
+            }
+        }
+
+        if (!coversCenter) {
+            setValidationError("A la primera ronda, la paraula ha de passar per la casella central (H8) ★.");
+            return;
+        }
+    }
+    
+    setValidationError(null);
+    setShowConfirmModal(true);
+  };
+
+  const executeSubmit = async () => {
+    if (!gameId) return;
 
     const rIndex = ROW_LABELS.indexOf(row);
     const cIndex = COL_LABELS.indexOf(col);
-
-    // Format Basic Validation only (length check)
-    if (tilesPreview.length === 0) return;
-
     const playerId = `table_${storedTable}`; 
 
     await submitMove(gameId, {
@@ -118,6 +152,7 @@ const PlayerView: React.FC = () => {
     });
 
     setSubmitted(true);
+    setShowConfirmModal(false);
   };
 
   if (!isPlaying) {
@@ -171,89 +206,109 @@ const PlayerView: React.FC = () => {
   const isRoundOpen = gameState?.status === RoundStatus.PLAYING;
 
   return (
-    <div className="min-h-screen bg-gray-50 p-4 pb-24">
-      <div className="max-w-lg mx-auto space-y-4">
+    <div className="min-h-screen bg-gray-50 p-2 pb-24">
+      <div className="max-w-lg mx-auto space-y-3">
         
-        <header className="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm border border-gray-100">
-          <div className="flex items-center gap-3">
-              <div className="bg-indigo-100 p-2 rounded-lg text-center min-w-[3rem]">
-                  <span className="block text-[10px] uppercase font-bold text-indigo-400">Taula</span>
-                  <span className="text-xl font-black text-indigo-700 leading-none">{storedTable}</span>
+        <header className="flex justify-between items-center bg-white p-3 rounded-xl shadow-sm border border-gray-100">
+          <div className="flex items-center gap-2">
+              <div className="bg-indigo-100 p-1 px-2 rounded-lg text-center min-w-[2.5rem]">
+                  <span className="block text-[9px] uppercase font-bold text-indigo-400">Taula</span>
+                  <span className="text-lg font-black text-indigo-700 leading-none">{storedTable}</span>
               </div>
-              <div>
-                  <div className="text-xs text-gray-500 font-bold uppercase">Jugador</div>
-                  <div className="text-lg font-black text-slate-800 leading-none">{storedName}</div>
+              <div className="leading-tight">
+                  <div className="text-[10px] text-gray-400 font-bold uppercase">Jugador</div>
+                  <div className="text-base font-black text-slate-800">{storedName}</div>
               </div>
           </div>
-          <button onClick={handleLogout} className="text-xs font-bold text-red-500 bg-red-50 px-3 py-2 rounded-lg">SORTIR</button>
+          <button onClick={handleLogout} className="text-[10px] font-bold text-red-500 bg-red-50 px-2 py-1.5 rounded-lg">SORTIR</button>
         </header>
 
         {/* Feedback d'estat de ronda */}
         {!isRoundOpen && (
-            <div className="bg-yellow-100 text-yellow-800 p-3 rounded-xl text-center font-bold shadow-sm text-sm border border-yellow-200">
-                ⚠ RONDA NO OBERTA (Pots preparar la jugada)
+            <div className="bg-yellow-100 text-yellow-800 p-2 rounded-xl text-center font-bold shadow-sm text-xs border border-yellow-200">
+                ⚠ RONDA NO OBERTA (Prepara la jugada)
             </div>
         )}
         {isRoundOpen && (
-            <div className="flex justify-between items-center bg-green-600 text-white p-3 rounded-xl shadow-md animate-pulse">
-                 <span className="text-sm font-bold uppercase tracking-widest">RONDA EN JOC</span>
-                 <div className="flex items-center gap-2 bg-green-700 px-3 py-1 rounded-lg">
-                     <span className="font-black text-xl">#{currentRound}</span>
+            <div className="flex justify-between items-center bg-green-600 text-white p-2 px-3 rounded-xl shadow-md animate-pulse">
+                 <span className="text-xs font-bold uppercase tracking-widest">RONDA EN JOC</span>
+                 <div className="flex items-center gap-2 bg-green-700 px-2 py-1 rounded-lg">
+                     <span className="font-black text-lg">#{currentRound}</span>
                  </div>
             </div>
         )}
 
         <form 
-          onSubmit={handleSubmit} 
-          className={`bg-white p-5 rounded-xl shadow-lg border border-gray-200 space-y-5 transition-opacity ${!isRoundOpen ? 'ring-2 ring-yellow-400' : ''}`}
+          onSubmit={handlePreSubmit} 
+          className={`bg-white p-3 rounded-xl shadow-lg border border-gray-200 space-y-4 transition-opacity ${!isRoundOpen ? 'ring-2 ring-yellow-400' : ''}`}
         >
           <div>
-            <label className="block text-xs font-bold text-gray-400 uppercase mb-1 ml-1">Paraula</label>
+            <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1 ml-1">Paraula</label>
             <input
               type="text"
               value={word}
               onChange={handleWordChange}
-              className="w-full p-4 bg-gray-50 border-2 border-gray-200 rounded-xl text-4xl font-mono font-bold tracking-widest uppercase text-center focus:ring-4 focus:ring-blue-100 focus:border-blue-500 outline-none"
+              className="w-full p-3 bg-gray-50 border-2 border-gray-200 rounded-xl text-3xl font-mono font-bold tracking-widest uppercase text-center focus:ring-4 focus:ring-blue-100 focus:border-blue-500 outline-none"
               placeholder="LLIBRE"
               autoComplete="off"
             />
           </div>
 
+          {/* Validation Error Message */}
+          {validationError && (
+              <div className="bg-red-100 text-red-700 p-3 rounded-lg text-sm font-bold border border-red-200 animate-pulse">
+                  {validationError}
+              </div>
+          )}
+
           {tilesPreview.length > 0 && (
-            <div className="bg-indigo-50 p-3 rounded-xl border border-indigo-100">
-                <div className="text-[10px] text-indigo-400 mb-2 text-center uppercase tracking-wider font-bold">Clica una fitxa per marcar Escarràs</div>
-                <div className="flex flex-wrap gap-2 justify-center">
+            <div className="bg-indigo-50 p-2 rounded-xl border border-indigo-100">
+                <div className="text-[9px] text-indigo-400 mb-1 text-center uppercase tracking-wider font-bold">Clica una fitxa per marcar Escarràs</div>
+                
+                {/* Flex container that centers and shrinks items instead of scrolling */}
+                <div className="flex flex-nowrap gap-[2px] justify-center w-full py-1 px-1">
                     {tilesPreview.map((t, i) => (
-                        <Tile key={i} tile={t} size="md" onClick={() => handleTileClick(i)} className="shadow-sm" />
+                        <Tile 
+                            key={i} 
+                            tile={t} 
+                            size="md" 
+                            onClick={() => handleTileClick(i)} 
+                            // !w-auto !h-auto and flex-1 allow the tile to shrink below its default size 
+                            // while aspect-square maintains shape
+                            className="shadow-sm flex-1 min-w-0 aspect-square !w-auto !h-auto max-w-[2.5rem]" 
+                        />
                     ))}
                 </div>
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-2 gap-3">
+            {/* FILA (Lletres) */}
             <div className="bg-gray-50 p-2 rounded-lg border border-gray-100">
-              <label className="block text-xs font-bold text-gray-400 uppercase mb-1 text-center">Columna</label>
-              <select value={col} onChange={(e) => setCol(e.target.value)} className="w-full p-2 bg-white border border-gray-200 rounded-md text-xl font-bold text-center shadow-sm">
-                {COL_LABELS.map(l => <option key={l} value={l}>{l}</option>)}
-              </select>
-            </div>
-            <div className="bg-gray-50 p-2 rounded-lg border border-gray-100">
-              <label className="block text-xs font-bold text-gray-400 uppercase mb-1 text-center">Fila</label>
+              <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1 text-center">Fila</label>
               <select value={row} onChange={(e) => setRow(e.target.value)} className="w-full p-2 bg-white border border-gray-200 rounded-md text-xl font-bold text-center shadow-sm">
                 {ROW_LABELS.map(l => <option key={l} value={l}>{l}</option>)}
+              </select>
+            </div>
+
+            {/* COLUMNA (Nombres) */}
+            <div className="bg-gray-50 p-2 rounded-lg border border-gray-100">
+              <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1 text-center">Columna</label>
+              <select value={col} onChange={(e) => setCol(e.target.value)} className="w-full p-2 bg-white border border-gray-200 rounded-md text-xl font-bold text-center shadow-sm">
+                {COL_LABELS.map(l => <option key={l} value={l}>{l}</option>)}
               </select>
             </div>
           </div>
 
           <div className="flex rounded-lg bg-gray-100 p-1">
-               <button type="button" onClick={() => setDirection('H')} className={`flex-1 py-3 rounded-md font-bold text-sm transition-all ${direction === 'H' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500'}`}>HORITZONTAL →</button>
-               <button type="button" onClick={() => setDirection('V')} className={`flex-1 py-3 rounded-md font-bold text-sm transition-all ${direction === 'V' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500'}`}>VERTICAL ↓</button>
+               <button type="button" onClick={() => setDirection('H')} className={`flex-1 py-3 rounded-md font-bold text-xs transition-all ${direction === 'H' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500'}`}>HORITZONTAL →</button>
+               <button type="button" onClick={() => setDirection('V')} className={`flex-1 py-3 rounded-md font-bold text-xs transition-all ${direction === 'V' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500'}`}>VERTICAL ↓</button>
           </div>
 
           <button
             type="submit"
             disabled={submitted || !word}
-            className={`w-full py-5 rounded-xl text-white font-black text-xl shadow-xl transition-all mt-4 transform active:scale-95
+            className={`w-full py-4 rounded-xl text-white font-black text-xl shadow-xl transition-all mt-2 transform active:scale-95
               ${submitted ? 'bg-green-500 scale-95' : 'bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700'}
             `}
           >
@@ -261,6 +316,54 @@ const PlayerView: React.FC = () => {
           </button>
         </form>
       </div>
+
+      {/* CONFIRMATION MODAL */}
+      {showConfirmModal && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-xl shadow-2xl p-5 max-w-sm w-full space-y-4 animate-in fade-in zoom-in duration-200">
+                <h3 className="text-lg font-black text-center text-gray-800 uppercase">Confirmar Jugada</h3>
+                
+                <div className="bg-gray-50 p-3 rounded-xl border-2 border-gray-100 text-center space-y-2">
+                    {/* Visual Tiles in Modal - Shrinking behavior */}
+                    <div className="flex flex-nowrap gap-[2px] justify-center w-full py-1 px-1">
+                        {tilesPreview.map((t, i) => (
+                            <Tile 
+                                key={i} 
+                                tile={t} 
+                                size="md" 
+                                className="shadow-md flex-1 min-w-0 aspect-square !w-auto !h-auto max-w-[2.5rem]" 
+                            />
+                        ))}
+                    </div>
+                    <div className="flex justify-center gap-4 text-xs font-bold text-gray-500 uppercase border-t pt-2 border-gray-200">
+                        <span>Fila: <span className="text-gray-800">{row}</span></span>
+                        <span>Col: <span className="text-gray-800">{col}</span></span>
+                        <span>Dir: <span className="text-gray-800">{direction === 'H' ? 'HOR' : 'VER'}</span></span>
+                    </div>
+                </div>
+
+                <div className="text-center text-[10px] text-gray-400 font-semibold px-4 leading-tight">
+                    Verifica que els Escarrassos (?) estiguin ben marcats (vora verda).
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 pt-2">
+                    <button 
+                        onClick={() => setShowConfirmModal(false)}
+                        className="py-3 rounded-lg font-bold text-sm text-gray-600 bg-gray-100 hover:bg-gray-200 transition-colors"
+                    >
+                        CORREGIR
+                    </button>
+                    <button 
+                        onClick={executeSubmit}
+                        className="py-3 rounded-lg font-bold text-sm text-white bg-indigo-600 hover:bg-indigo-700 shadow-lg transition-transform active:scale-95"
+                    >
+                        SÍ, ENVIAR
+                    </button>
+                </div>
+            </div>
+        </div>
+      )}
+
     </div>
   );
 };

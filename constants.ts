@@ -40,8 +40,11 @@ export const DOUBLE_LETTER_COORDS = [
   '14,3', '14,11'
 ];
 
-export const COL_LABELS = ['A','B','C','D','E','F','G','H','I','J','K','L','M','N','O'];
-export const ROW_LABELS = ['1','2','3','4','5','6','7','8','9','10','11','12','13','14','15'];
+// Files (Rows) són Lletres (A-O)
+export const ROW_LABELS = ['A','B','C','D','E','F','G','H','I','J','K','L','M','N','O'];
+
+// Columnes (Cols) són Nombres (1-15)
+export const COL_LABELS = ['1','2','3','4','5','6','7','8','9','10','11','12','13','14','15'];
 
 // Distribució exacta de fitxes Scrabble Català
 export const TILE_COUNTS: Record<string, number> = {

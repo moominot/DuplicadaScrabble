@@ -11,6 +11,7 @@ const SettingsView: React.FC = () => {
     const { gameState, loading } = useGame(gameId);
     
     const [timerDuration, setTimerDuration] = useState('180');
+    const [gracePeriod, setGracePeriod] = useState('10');
     const [judgeName, setJudgeName] = useState('');
     const [roundNum, setRoundNum] = useState('1');
     
@@ -20,6 +21,7 @@ const SettingsView: React.FC = () => {
     useEffect(() => {
         if(gameState) {
             setTimerDuration(gameState.config.timerDurationSeconds.toString());
+            setGracePeriod((gameState.config.gracePeriodSeconds || 10).toString());
             setJudgeName(gameState.config.judgeName);
             setRoundNum(gameState.round.toString());
         }
@@ -29,6 +31,7 @@ const SettingsView: React.FC = () => {
         if(!gameId) return;
         await updateConfig(gameId, {
             timerDurationSeconds: parseInt(timerDuration) || 180,
+            gracePeriodSeconds: parseInt(gracePeriod) || 10,
             judgeName: judgeName
         });
         await updateRoundNumber(gameId, parseInt(roundNum) || 1);
@@ -59,18 +62,31 @@ const SettingsView: React.FC = () => {
                 <div className="p-8 space-y-6">
                     
                     {/* Timer Settings */}
-                    <div className="space-y-2">
-                        <label className="block font-bold text-gray-700">Durada del Temporitzador (segons)</label>
-                        <div className="flex items-center gap-4">
-                            <input 
-                                type="number" 
-                                value={timerDuration}
-                                onChange={(e) => setTimerDuration(e.target.value)}
-                                className="border p-3 rounded w-32 text-xl font-mono font-bold"
-                            />
-                            <span className="text-gray-500 text-sm">
-                                (180 = 3 minuts, 120 = 2 minuts)
-                            </span>
+                    <div className="grid grid-cols-2 gap-6">
+                        <div className="space-y-2">
+                            <label className="block font-bold text-gray-700">Durada Ronda (segons)</label>
+                            <div className="flex items-center gap-4">
+                                <input 
+                                    type="number" 
+                                    value={timerDuration}
+                                    onChange={(e) => setTimerDuration(e.target.value)}
+                                    className="border p-3 rounded w-full text-xl font-mono font-bold"
+                                />
+                            </div>
+                            <p className="text-xs text-gray-500">180 = 3 min</p>
+                        </div>
+
+                        <div className="space-y-2">
+                            <label className="block font-bold text-gray-700">Temps de Gràcia (segons)</label>
+                            <div className="flex items-center gap-4">
+                                <input 
+                                    type="number" 
+                                    value={gracePeriod}
+                                    onChange={(e) => setGracePeriod(e.target.value)}
+                                    className="border p-3 rounded w-full text-xl font-mono font-bold"
+                                />
+                            </div>
+                            <p className="text-xs text-gray-500">Temps extra abans de penalitzar.</p>
                         </div>
                     </div>
 

@@ -145,6 +145,18 @@ export interface ScoreResult {
   error?: string;
 }
 
+// Helper to get multiplier value
+const getMultiplierVal = (type: MultiplierType, isWord: boolean): number => {
+    if (isWord) {
+        if (type === MultiplierType.DoubleWord || type === MultiplierType.Center) return 2;
+        if (type === MultiplierType.TripleWord) return 3;
+    } else {
+        if (type === MultiplierType.DoubleLetter) return 2;
+        if (type === MultiplierType.TripleLetter) return 3;
+    }
+    return 1;
+};
+
 export const calculateMoveScore = (
   board: BoardCell[][], 
   tiles: Tile[], 
@@ -153,15 +165,20 @@ export const calculateMoveScore = (
   startCol: number, 
   direction: 'H' | 'V'
 ): ScoreResult => {
-  let wordScore = 0;
-  let wordMultiplier = 1;
+  let totalScore = 0;
+  
+  let mainWordScore = 0;
+  let mainWordMultiplier = 1;
   let tilesUsedFromRack = 0;
   
   const rackAvailable = [...(currentRack || [])]; 
+  const dr = direction === 'H' ? 0 : 1;
+  const dc = direction === 'H' ? 1 : 0;
 
+  // 1. Calculate Main Word Score
   for (let i = 0; i < tiles.length; i++) {
-    const r = direction === 'H' ? startRow : startRow + i;
-    const c = direction === 'H' ? startCol + i : startCol;
+    const r = startRow + (i * dr);
+    const c = startCol + (i * dc);
 
     // Boundary Check
     if (r >= BOARD_SIZE || c >= BOARD_SIZE) {
@@ -171,23 +188,23 @@ export const calculateMoveScore = (
     const cell = board[r][c];
     const tile = tiles[i];
     const tileInternalChar = tile.char.toUpperCase(); 
-
-    let tilePoints = tile.value;
-
+    
+    // Validate and Calculate Points for this cell
     if (cell.tile) {
-      // Existing Tile Validation
+      // --- EXISTING TILE ---
       if (cell.tile.char.toUpperCase() !== tileInternalChar) {
         return { 
             score: 0, 
             isValid: false, 
-            error: `Conflicte a ${String.fromCharCode(65+c)}${r+1}: El tauler té '${cell.tile.displayChar}' però has posat '${tile.displayChar}'.`
+            error: `Conflicte a ${String.fromCharCode(65+r)}${c+1}: El tauler té '${cell.tile.displayChar}' però has posat '${tile.displayChar}'.`
         };
       }
-      tilePoints = cell.tile.value;
+      // Existing tiles retain their face value, but NO multipliers apply
+      mainWordScore += cell.tile.value;
     } else {
-      // New Tile Validation against Rack
+      // --- NEW TILE ---
+      // Check Rack
       const rackIndex = rackAvailable.indexOf(tileInternalChar);
-      
       if (rackIndex !== -1) {
         rackAvailable.splice(rackIndex, 1);
       } else {
@@ -202,29 +219,74 @@ export const calculateMoveScore = (
              }
           }
       }
-
       tilesUsedFromRack++;
 
-      // Apply Multipliers
-      if (cell.multiplier === MultiplierType.DoubleLetter) tilePoints *= 2;
-      else if (cell.multiplier === MultiplierType.TripleLetter) tilePoints *= 3;
+      // Apply Letter Multipliers to the Tile Value
+      let letterVal = tile.value;
+      const letterMult = getMultiplierVal(cell.multiplier, false);
+      letterVal *= letterMult;
       
-      if (cell.multiplier === MultiplierType.DoubleWord || cell.multiplier === MultiplierType.Center) wordMultiplier *= 2;
-      else if (cell.multiplier === MultiplierType.TripleWord) wordMultiplier *= 3;
+      mainWordScore += letterVal;
+
+      // Accumulate Word Multiplier
+      const wordMult = getMultiplierVal(cell.multiplier, true);
+      mainWordMultiplier *= wordMult;
+
+      // --- CROSS WORD CALCULATION (Perpendicular) ---
+      // If we placed a NEW tile, check if it forms a word in the other direction
+      const crossDr = direction === 'H' ? 1 : 0;
+      const crossDc = direction === 'H' ? 0 : 1;
+      
+      // Check immediate neighbors
+      const prevR = r - crossDr; 
+      const prevC = c - crossDc;
+      const nextR = r + crossDr; 
+      const nextC = c + crossDc;
+
+      const hasPrev = (prevR >= 0 && prevC >= 0 && prevR < BOARD_SIZE && prevC < BOARD_SIZE && board[prevR][prevC].tile);
+      const hasNext = (nextR >= 0 && nextC >= 0 && nextR < BOARD_SIZE && nextC < BOARD_SIZE && board[nextR][nextC].tile);
+
+      if (hasPrev || hasNext) {
+          let crossWordScore = 0;
+          let crossWordMultiplier = wordMult; // The multiplier of the CURRENT cell applies to the cross word too
+          
+          // 1. Add current tile value (with its letter multiplier)
+          crossWordScore += letterVal; 
+
+          // 2. Scan Backwards
+          let currR = prevR;
+          let currC = prevC;
+          while (currR >= 0 && currC >= 0 && currR < BOARD_SIZE && currC < BOARD_SIZE && board[currR][currC].tile) {
+              crossWordScore += board[currR][currC].tile!.value;
+              currR -= crossDr;
+              currC -= crossDc;
+          }
+
+          // 3. Scan Forwards
+          currR = nextR;
+          currC = nextC;
+          while (currR >= 0 && currC >= 0 && currR < BOARD_SIZE && currC < BOARD_SIZE && board[currR][currC].tile) {
+              crossWordScore += board[currR][currC].tile!.value;
+              currR += crossDr;
+              currC += crossDc;
+          }
+
+          // 4. Apply Word Multiplier to the whole cross word
+          totalScore += (crossWordScore * crossWordMultiplier);
+      }
     }
-    
-    wordScore += tilePoints;
   }
 
-  wordScore *= wordMultiplier;
+  // Apply Main Word Multiplier
+  totalScore += (mainWordScore * mainWordMultiplier);
 
-  // Bingo Bonus
+  // Bingo Bonus (+50 points for using 7 tiles)
   if (tilesUsedFromRack === 7) {
-    wordScore += 50;
+    totalScore += 50;
   }
 
   return {
-      score: wordScore,
+      score: totalScore,
       isValid: true
   };
 };

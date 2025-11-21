@@ -49,6 +49,7 @@ export const createNewGame = async (hostName: string): Promise<string> => {
         participants: {}, // Inicialitzat buit
         config: {
             timerDurationSeconds: 180,
+            gracePeriodSeconds: 10, // Default 10s grace period
             judgeName: hostName || 'MÀSTER'
         },
         roundStartTime: null,
@@ -98,15 +99,23 @@ export const updateRoundNumber = async (gameId: string, round: number) => {
  */
 export const submitMove = async (gameId: string, move: PlayerMove) => {
   // Només comprovem el format bàsic, no la lògica de joc
-  await set(ref(db, `games/${gameId}/rounds/${move.roundNumber}/moves/${move.playerId}`), move);
+  console.log(`[GameService] Enviant jugada a: games/${gameId}/rounds/${move.roundNumber}/moves/${move.playerId}`);
   
-  // Actualitzem el nom del participant si ha canviat (o és nou)
-  await update(ref(db, `games/${gameId}/participants/${move.playerId}`), {
-      id: move.playerId,
-      name: move.playerName,
-      tableNumber: move.tableNumber
-      // No toquem el score encara
-  });
+  try {
+      await set(ref(db, `games/${gameId}/rounds/${move.roundNumber}/moves/${move.playerId}`), move);
+      
+      // Actualitzem el nom del participant si ha canviat (o és nou)
+      await update(ref(db, `games/${gameId}/participants/${move.playerId}`), {
+          id: move.playerId,
+          name: move.playerName,
+          tableNumber: move.tableNumber
+          // No toquem el score encara
+      });
+      console.log("[GameService] Jugada enviada correctament.");
+  } catch (e) {
+      console.error("[GameService] Error enviant jugada:", e);
+      throw e;
+  }
 };
 
 export const updateRack = async (gameId: string, newRack: string[]) => {
@@ -213,14 +222,17 @@ export const finalizeRound = async (gameId: string, masterMove: PlayerMove) => {
   const updates: any = {};
   const currentParticipants = { ...state.participants };
   const roundMoves = state.moves || [];
+  const processedRoundMoves: PlayerMove[] = []; // Array per guardar a l'historial
   
-  // Temps límit (amb 5 segons de gràcia)
-  const gracePeriod = 5000; 
+  // Temps límit (amb temps de gràcia configurable)
+  const gracePeriod = (state.config.gracePeriodSeconds || 10) * 1000;
   const roundEndTime = (state.roundStartTime || 0) + (state.config.timerDurationSeconds * 1000);
 
   // Iterem sobre totes les jugades enviades per calcular-ne la puntuació final real
   for (const move of roundMoves) {
       const pid = move.playerId;
+      
+      // Assegurar que existeix l'objecte participant
       if (!currentParticipants[pid]) {
           currentParticipants[pid] = { 
               id: pid, 
@@ -231,9 +243,12 @@ export const finalizeRound = async (gameId: string, masterMove: PlayerMove) => {
           };
       }
 
-      // Validació de temps
+      // Validació de temps (Només si no és la jugada mestra seleccionada)
+      // Si és la mestra, la forcem com a vàlida encara que hagi entrat tard
       let isLate = false;
-      if (state.roundStartTime && move.timestamp > (roundEndTime + gracePeriod)) {
+      const isChosenMasterMove = (move.id === masterMove.id);
+
+      if (!isChosenMasterMove && state.roundStartTime && move.timestamp > (roundEndTime + gracePeriod)) {
           isLate = true;
       }
 
@@ -253,29 +268,45 @@ export const finalizeRound = async (gameId: string, masterMove: PlayerMove) => {
       if (isLate) {
           finalScore = 0;
           error = "Fora de temps";
+          result.isValid = false; // Force invalid in backend check
+      }
+      
+      // Force valid if it's the chosen master move (override timestamp or small errors if Master decides)
+      if (isChosenMasterMove) {
+          finalScore = result.score; // Use calculated score even if late
+          error = null;
       }
 
       // Actualitzem Participant
-      currentParticipants[pid].roundScores = currentParticipants[pid].roundScores || {};
+      if (!currentParticipants[pid].roundScores) currentParticipants[pid].roundScores = {};
       currentParticipants[pid].roundScores[state.round] = finalScore;
       
       // Recalcular total score sumant tot l'històric
       let newTotal = 0;
-      Object.values(currentParticipants[pid].roundScores).forEach(s => newTotal += s);
+      Object.values(currentParticipants[pid].roundScores).forEach((s) => {
+          newTotal += (Number(s) || 0);
+      });
       currentParticipants[pid].totalScore = newTotal;
 
-      // Guardar el resultat calculat a la ronda
-      updates[`games/${gameId}/rounds/${state.round}/results/${pid}`] = {
+      // Guardar el resultat calculat dins de l'array d'arxiu
+      // FIX: Save as 'isValid' to match types.ts
+      const processedMove = {
           ...move,
           score: finalScore,
-          valid: result.isValid && !isLate,
-          error: error
+          isValid: (isChosenMasterMove || (result.isValid && !isLate)), // Renamed from 'valid' to 'isValid'
+          error: error || null // Convert undefined to null to avoid Firebase crash
       };
+      processedRoundMoves.push(processedMove);
+
+      // Guardar el resultat calculat a la ronda (per persistència)
+      updates[`games/${gameId}/rounds/${state.round}/results/${pid}`] = processedMove;
   }
 
   // 2. Aplicar Jugada Mestra al Tauler
   const { row, col, direction, tiles } = masterMove;
   const newBoard = state.board.map(r => r.map(c => ({ ...c })));
+  
+  // Identify NEW tiles being placed (to remove from rack)
   const tilesUsedFromRack: string[] = [];
 
   tiles.forEach((tile, index) => {
@@ -284,8 +315,12 @@ export const finalizeRound = async (gameId: string, masterMove: PlayerMove) => {
       
       if (r >= 0 && r < 15 && c >= 0 && c < 15) {
           const existingCell = newBoard[r][c];
+          
+          // Only consume rack tile if board cell is empty
           if (!existingCell.tile) {
               newBoard[r][c] = { ...existingCell, tile: tile };
+              
+              // Add to removal list (internal chars: 'a' for blank, 'A' for normal)
               if (tile.isBlank) tilesUsedFromRack.push('?');
               else tilesUsedFromRack.push(tile.char.toUpperCase());
           }
@@ -297,20 +332,28 @@ export const finalizeRound = async (gameId: string, masterMove: PlayerMove) => {
   // 3. Netejar Faristol
   const newRack = [...(state.currentRack || [])];
   for (const charToRemove of tilesUsedFromRack) {
-      const idx = newRack.indexOf(charToRemove);
-      if (idx !== -1) newRack.splice(idx, 1);
-      else {
-          const wildcardIdx = newRack.indexOf('?');
-          if (wildcardIdx !== -1) newRack.splice(wildcardIdx, 1);
+      // Try to find exact char
+      let idx = newRack.indexOf(charToRemove);
+      
+      // If not found and we needed a blank, try finding '?' in rack
+      if (idx === -1 && charToRemove === '?') {
+          idx = newRack.indexOf('?');
+      }
+
+      if (idx !== -1) {
+          newRack.splice(idx, 1);
       }
   }
 
   // 4. Arxivar Històric
+  // IMPORTANT: Guardem les jugades processades (processedRoundMoves)
   const newHistoryEntry = {
       roundNumber: state.round,
       masterMove: masterMove,
+      moves: processedRoundMoves, // ARA SÍ, guardem les respostes
       rack: [...(state.currentRack || [])],
       boardSnapshot: boardSnapshot,
+      playerScoresSnapshot: JSON.parse(JSON.stringify(currentParticipants)), // Deep copy per evitar referències
       startTime: state.roundStartTime || undefined,
       endTime: Date.now()
   };

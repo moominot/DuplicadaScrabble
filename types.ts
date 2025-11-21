@@ -58,14 +58,17 @@ export interface Participant {
 export interface ArchivedRound {
   roundNumber: number;
   masterMove: PlayerMove;
+  moves: PlayerMove[]; // Llista de totes les jugades processades d'aquella ronda
   rack: string[];
   boardSnapshot: BoardCell[][];
+  playerScoresSnapshot: Record<string, Participant>; // Classificació en aquell moment
   startTime?: number;
   endTime?: number;
 }
 
 export interface GameConfig {
   timerDurationSeconds: number;
+  gracePeriodSeconds: number; // Temps extra permès abans de penalitzar
   judgeName: string;
 }
 
