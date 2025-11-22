@@ -3,7 +3,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { Link, useSearchParams, useNavigate } from 'react-router-dom';
 import { PlayerMove, RoundStatus, Participant } from '../types';
 import { COL_LABELS, ROW_LABELS } from '../constants';
-import { updateRack, refillRack, openRound, closeRound, finalizeRound, toggleTimer, resetTimer } from '../services/gameService';
+import { updateRack, refillRack, openRound, closeRound, finalizeRound, toggleTimer, resetTimer, reopenRound } from '../services/gameService';
 import { calculateMoveScore, parseInputWord, createTile, calculateRemainingBag } from '../utils/scrabbleUtils';
 import Board from '../components/Board';
 import Tile from '../components/Tile';
@@ -151,6 +151,11 @@ const MasterView: React.FC = () => {
       if(!gameId) return;
       await closeRound(gameId);
   };
+    
+  const handleReopenRound = async () => {
+      if(!gameId || isHistoryView) return;
+      await reopenRound(gameId);
+  };
 
   const handleToggleTimer = async () => {
       if(!gameId) return;
@@ -197,22 +202,18 @@ const MasterView: React.FC = () => {
   let processedMoves: ProcessedMove[] = [];
 
   if (isHistoryView && historyItem && historyItem.moves) {
-      // In history mode, simply take the saved moves (they are already processed with scores)
       processedMoves = historyItem.moves.map(m => ({
           ...m,
-          calculatedScore: m.score || 0, // Use stored score
-          // FIX: Llegir 'valid' (com es guardava abans) o 'isValid' (com es guardarà ara)
+          calculatedScore: m.score || 0, 
           valid: (m as any).valid ?? m.isValid ?? false, 
           error: m.error
       }));
   } else if (!isHistoryView) {
-      // In current mode, calculate scores on the fly for preview
       const currentMoves = gameState.moves || [];
       const roundEndTime = (gameState.roundStartTime || 0) + (gameState.config.timerDurationSeconds * 1000);
       const gracePeriod = (gameState.config.gracePeriodSeconds || 10) * 1000;
 
       processedMoves = currentMoves.map(m => {
-          // 1. Calculate Board Validity & Score
           const result = calculateMoveScore(
               gameState.board,
               m.tiles,
@@ -222,7 +223,6 @@ const MasterView: React.FC = () => {
               m.direction
           );
 
-          // 2. Check Timestamp Validity (Real-time)
           const isLate = (gameState.roundStartTime && m.timestamp > (roundEndTime + gracePeriod));
           
           if (isLate) {
@@ -314,7 +314,39 @@ const MasterView: React.FC = () => {
       }));
   };
 
-  // --- RANKING LOGIC: Use snapshot for history, live for current ---
+  // --- Opacity Logic for Rack Tiles ---
+  const getUsedRackIndices = () => {
+      if (!previewMove || !gameState) return [];
+      const usedIndices: number[] = [];
+      const rack = [...(displayRack || [])]; 
+      
+      const { row, col, direction, tiles } = previewMove;
+      const dr = direction === 'H' ? 0 : 1;
+      const dc = direction === 'H' ? 1 : 0;
+
+      tiles.forEach((tile, i) => {
+          const r = row + (i * dr);
+          const c = col + (i * dc);
+          if (r < 0 || r >= 15 || c < 0 || c >= 15) return;
+
+          const cell = gameState.board[r][c];
+          // If cell is empty, we used a tile from the rack
+          if (!cell.tile) {
+             const charToFind = tile.isBlank ? '?' : tile.char.toUpperCase();
+             
+             const idx = rack.findIndex((rChar, rIdx) => {
+                 const normRChar = rChar === '?' ? '?' : rChar.toUpperCase();
+                 return normRChar === charToFind && !usedIndices.includes(rIdx);
+             });
+             
+             if (idx !== -1) usedIndices.push(idx);
+          }
+      });
+      return usedIndices;
+  };
+
+  const usedRackIndices = getUsedRackIndices();
+
   const participantsSource = (isHistoryView && historyItem && historyItem.playerScoresSnapshot) 
         ? historyItem.playerScoresSnapshot 
         : gameState.participants;
@@ -379,17 +411,25 @@ const MasterView: React.FC = () => {
                     )}
 
                     {gameState.status === RoundStatus.REVIEW && (
-                        <button 
-                                onClick={() => selectedCandidateId && setShowConfirmModal(true)} 
-                                disabled={!selectedCandidateId || isApplying}
-                                className={`px-3 py-1 md:px-4 md:py-2 rounded shadow text-xs md:text-sm font-bold flex items-center gap-2 transition-all whitespace-nowrap
-                                    ${selectedCandidateId 
-                                        ? 'bg-blue-600 hover:bg-blue-700 text-white' 
-                                        : 'bg-gray-200 text-gray-400 cursor-not-allowed'}
-                                `}
-                        >
-                            {isApplying ? '...' : selectedCandidateId ? `APLICAR` : 'SELECCIONA'}
-                        </button>
+                        <>
+                            <button
+                                onClick={handleReopenRound}
+                                className="bg-amber-500 hover:bg-amber-600 text-white px-3 py-1 md:px-4 md:py-2 rounded shadow font-bold text-xs md:text-sm transition-colors whitespace-nowrap"
+                            >
+                                REOBRIR
+                            </button>
+                            <button 
+                                    onClick={() => selectedCandidateId && setShowConfirmModal(true)} 
+                                    disabled={!selectedCandidateId || isApplying}
+                                    className={`px-3 py-1 md:px-4 md:py-2 rounded shadow text-xs md:text-sm font-bold flex items-center gap-2 transition-all whitespace-nowrap
+                                        ${selectedCandidateId 
+                                            ? 'bg-blue-600 hover:bg-blue-700 text-white' 
+                                            : 'bg-gray-200 text-gray-400 cursor-not-allowed'}
+                                    `}
+                            >
+                                {isApplying ? '...' : selectedCandidateId ? `APLICAR` : 'SELECCIONA'}
+                            </button>
+                        </>
                     )}
                   </>
               )}
@@ -401,7 +441,7 @@ const MasterView: React.FC = () => {
                 className={`
                     relative flex items-center justify-center w-16 h-8 md:w-24 md:h-10 rounded-md border-2 font-mono text-lg md:text-xl font-bold select-none transition-colors shadow-inner cursor-pointer
                     ${timerFinished ? 'bg-red-100 border-red-500 text-red-600' : 
-                      gameState.status === RoundStatus.PLAYING ? 'bg-white border-green-500 text-green-600' : 'bg-gray-50 border-gray-300 text-gray-400'}
+                      (gameState.status === RoundStatus.PLAYING && !gameState.timerPausedRemaining) ? 'bg-white border-green-500 text-green-600' : 'bg-gray-50 border-gray-300 text-gray-400'}
                 `}
               >
                   {formatTime(timeLeft)}
@@ -411,14 +451,15 @@ const MasterView: React.FC = () => {
           </div>
       </div>
 
-      {/* --- Main Content (SCROLLABLE ON MOBILE) --- 
-          Critical Fix: overflow-y-auto allows the column stack to scroll on mobile.
-          lg:overflow-hidden locks it on desktop for split-pane scrolling.
+      {/* --- Main Content --- 
+          Split view with independent scrolling if content overflows
       */}
-      <div className="flex flex-col lg:flex-row flex-grow overflow-y-auto lg:overflow-hidden">
+      <div className="flex flex-col lg:flex-row flex-grow overflow-hidden relative">
           
-          {/* Left Column: Board & Rack */}
-          <div className="w-full lg:w-7/12 bg-gray-200 p-2 md:p-4 flex flex-col items-center border-r border-gray-300 shrink-0">
+          {/* Left Column: Board & Rack 
+              Added overflow-y-auto to ensure Rack is reachable if Board is tall
+          */}
+          <div className="w-full lg:w-7/12 bg-gray-200 p-2 md:p-4 flex flex-col items-center border-r border-gray-300 overflow-y-auto">
              
              {/* Board Container */}
              <div className="bg-white p-1 md:p-2 rounded-lg shadow-2xl mb-2 md:mb-6 flex justify-center w-full max-w-2xl mx-auto">
@@ -427,7 +468,7 @@ const MasterView: React.FC = () => {
                  </div>
              </div>
              
-             <div className="bg-white p-2 md:p-5 rounded-xl shadow-lg w-full max-w-2xl relative border border-gray-200 mt-auto md:mt-0">
+             <div className="bg-white p-2 md:p-5 rounded-xl shadow-lg w-full max-w-2xl relative border border-gray-200 mt-auto md:mt-0 shrink-0">
                 <div className="flex justify-between items-end mb-1 md:mb-3">
                     <h3 className="font-bold text-gray-700 text-xs md:text-base uppercase tracking-wide">
                         Faristol
@@ -437,9 +478,21 @@ const MasterView: React.FC = () => {
                     </span>
                 </div>
                 <div className="flex gap-1 md:gap-2 justify-center flex-wrap mb-2 md:mb-4 min-h-[3rem] bg-[#f8f4eb] p-2 rounded-lg border-inner shadow-inner">
-                    {(displayRack || []).map((c, i) => (
-                         <Tile key={i} tile={createTile(c)} size="md" className={isHistoryView ? 'opacity-70' : ''} />
-                    ))}
+                    {(displayRack || []).map((c, i) => {
+                         const isUsed = usedRackIndices.includes(i);
+                         return (
+                             <Tile 
+                                key={i} 
+                                tile={createTile(c)} 
+                                size="md" 
+                                className={`
+                                    transition-all duration-200
+                                    ${isHistoryView ? 'opacity-70' : ''}
+                                    ${isUsed ? 'opacity-30 grayscale scale-90' : ''}
+                                `} 
+                             />
+                         );
+                    })}
                 </div>
                 {!isHistoryView && (
                     <div className="flex items-center gap-2">
@@ -450,26 +503,24 @@ const MasterView: React.FC = () => {
                             onBlur={handleRackSubmit}
                             onKeyDown={(e) => e.key === 'Enter' && handleRackSubmit()}
                             disabled={gameState.status !== RoundStatus.IDLE}
-                            placeholder="LLETRES..."
-                            className="w-full p-2 md:p-3 pl-4 border-2 border-gray-200 rounded-lg font-mono font-bold uppercase tracking-widest focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none disabled:bg-gray-50 text-sm md:text-base"
+                            placeholder="LLETRES MANUALS..."
+                            className="w-full p-2 md:p-3 pl-4 border-2 border-gray-200 rounded-lg font-mono font-bold uppercase tracking-widest focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none disabled:bg-gray-50 disabled:text-gray-400 text-sm md:text-base transition-colors"
                         />
                         <button 
                             onClick={handleRefillRack}
                             disabled={gameState.status !== RoundStatus.IDLE}
-                            className="bg-indigo-100 text-indigo-700 p-2 md:p-3 rounded-lg hover:bg-indigo-200 disabled:opacity-50"
+                            title="Completar 7 fitxes des del sac"
+                            className="bg-indigo-100 text-indigo-700 p-2 md:p-3 rounded-lg hover:bg-indigo-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-bold text-sm whitespace-nowrap"
                         >
-                            🔄
+                            🔄 OMPLIR
                         </button>
                     </div>
                 )}
              </div>
           </div>
 
-          {/* Right Column: Moves & Ranking 
-              Mobile: h-auto (expands naturally, page scrolls).
-              Desktop: h-full (fits in split pane), internal scroll.
-          */}
-          <div className="w-full lg:w-5/12 bg-white flex flex-col border-l border-gray-200 shadow-xl z-20 h-auto lg:h-full">
+          {/* Right Column: Moves & Ranking */}
+          <div className="w-full lg:w-5/12 bg-white flex flex-col border-l border-gray-200 shadow-xl z-20 h-full overflow-hidden">
               <div className="flex border-b shrink-0 bg-white sticky top-0 z-30">
                   <button 
                     className={`flex-1 py-3 md:py-3 font-bold text-xs md:text-sm uppercase tracking-wide ${!viewHistoryMode ? 'text-indigo-600 border-b-2 border-indigo-600 bg-indigo-50' : 'text-gray-500'}`}
@@ -485,11 +536,7 @@ const MasterView: React.FC = () => {
                   </button>
               </div>
 
-              {/* List Container:
-                  Mobile: Overflow visible (use page scroll).
-                  Desktop: Overflow auto (use internal scroll).
-              */}
-              <div className="flex-grow overflow-visible lg:overflow-y-auto p-0 min-h-[400px]">
+              <div className="flex-grow overflow-y-auto p-0 min-h-[400px]">
                   {(!viewHistoryMode) ? (
                       <div className="divide-y divide-gray-100 pb-20 lg:pb-0">
                              {processedMoves.length === 0 && <div className="p-4 text-center text-gray-400 italic">Cap resposta disponible.</div>}

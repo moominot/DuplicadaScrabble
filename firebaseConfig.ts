@@ -1,5 +1,4 @@
-
-import { initializeApp } from "firebase/app";
+import * as firebaseApp from "firebase/app";
 import { getDatabase } from "firebase/database";
 
 // Configuración de Firebase
@@ -17,5 +16,6 @@ const firebaseConfig = {
   appId: "1:831532666384:web:c9d02cb6176d3ff5b5c495"
 };
 
-const app = initializeApp(firebaseConfig);
+// Use namespace import to handle potential type definition mismatches
+const app = firebaseApp.initializeApp(firebaseConfig);
 export const db = getDatabase(app);

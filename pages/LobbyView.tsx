@@ -64,7 +64,7 @@ const LobbyView: React.FC = () => {
         {/* Header */}
         <div className="text-center space-y-4">
             <h1 className="text-6xl font-black tracking-tighter bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-green-400">
-                Scrabble Duplicat
+                Scrabble DupliCat
             </h1>
             <p className="text-slate-400 text-xl">Sala de Partides Online</p>
         </div>

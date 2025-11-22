@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { updateConfig, updateRoundNumber, resetGame } from '../services/gameService';
@@ -46,6 +45,8 @@ const SettingsView: React.FC = () => {
         
         if (gameId) {
             await resetGame(gameId);
+            // Use navigate specifically to avoid 'Access denied' error with direct location manipulation
+            navigate('/');
         }
     }
 

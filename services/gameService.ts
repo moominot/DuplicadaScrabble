@@ -1,4 +1,3 @@
-
 import { ref, set, get, update, push, remove } from 'firebase/database';
 import { db } from '../firebaseConfig';
 import { GameState, PlayerMove, RoundStatus, GameConfig, Participant } from '../types';
@@ -152,15 +151,16 @@ export const openRound = async (gameId: string) => {
     }
 
     const durationMs = state.config.timerDurationSeconds * 1000;
-    const now = Date.now();
-
+    
+    // We set status to PLAYING so the rack is visible on projectors.
+    // But we keep timerEndTime NULL and set timerPausedRemaining to duration.
+    // roundStartTime is NULL because the "real" time hasn't started ticking for validation purposes.
     await update(ref(db, `games/${gameId}`), {
         status: RoundStatus.PLAYING,
-        roundStartTime: now,
-        timerEndTime: now + durationMs,
-        timerPausedRemaining: null,
+        roundStartTime: null, 
+        timerEndTime: null, 
+        timerPausedRemaining: durationMs, 
     });
-    // Netejar jugades anteriors si n'hi hauria (per seguretat, encara que es guarden per ID de ronda)
 };
 
 export const closeRound = async (gameId: string) => {
@@ -171,24 +171,55 @@ export const closeRound = async (gameId: string) => {
     });
 };
 
+export const reopenRound = async (gameId: string) => {
+    const state = await fetchGameState(gameId);
+    if (!state || state.status !== RoundStatus.REVIEW) return;
+
+    const extraTimeMs = 30 * 1000; // 30 seconds
+    const now = Date.now();
+    const durationMs = state.config.timerDurationSeconds * 1000;
+
+    // Shift start time forward so that (StartTime + Duration) lands 30s from now
+    const newEndTime = now + extraTimeMs;
+    const newStartTime = newEndTime - durationMs;
+
+    await update(ref(db, `games/${gameId}`), {
+        status: RoundStatus.PLAYING,
+        timerEndTime: newEndTime,
+        timerPausedRemaining: null,
+        roundStartTime: newStartTime 
+    });
+};
+
 export const toggleTimer = async (gameId: string) => {
     const state = await fetchGameState(gameId);
     if (!state || state.status !== RoundStatus.PLAYING) return;
 
     const now = Date.now();
+    const durationMs = state.config.timerDurationSeconds * 1000;
 
     if (state.timerPausedRemaining) {
+        // RESUME
         const newEndTime = now + state.timerPausedRemaining;
+        
+        // Sync roundStartTime. Move limit logic relies on (roundStartTime + duration).
+        // We need to ensure (roundStartTime + duration) equals newEndTime.
+        // Therefore: roundStartTime = newEndTime - duration.
+        const newStartTime = newEndTime - durationMs;
+
         await update(ref(db, `games/${gameId}`), {
             timerEndTime: newEndTime,
-            timerPausedRemaining: null
+            timerPausedRemaining: null,
+            roundStartTime: newStartTime
         });
     } else if (state.timerEndTime) {
+        // PAUSE
         const remaining = state.timerEndTime - now;
         if (remaining > 0) {
             await update(ref(db, `games/${gameId}`), {
                 timerEndTime: null,
                 timerPausedRemaining: remaining
+                // We don't update roundStartTime here, it becomes irrelevant while paused
             });
         }
     }
@@ -203,7 +234,8 @@ export const resetTimer = async (gameId: string) => {
 
     await update(ref(db, `games/${gameId}`), {
         timerEndTime: now + durationMs,
-        timerPausedRemaining: null
+        timerPausedRemaining: null,
+        roundStartTime: now
     });
 };
 
@@ -226,7 +258,12 @@ export const finalizeRound = async (gameId: string, masterMove: PlayerMove) => {
   
   // Temps límit (amb temps de gràcia configurable)
   const gracePeriod = (state.config.gracePeriodSeconds || 10) * 1000;
-  const roundEndTime = (state.roundStartTime || 0) + (state.config.timerDurationSeconds * 1000);
+  
+  // If roundStartTime is null (never started timer), assume roundEndTime is effectively infinite or rely on master judgement.
+  // Otherwise calculate end time.
+  const roundEndTime = state.roundStartTime 
+      ? (state.roundStartTime + (state.config.timerDurationSeconds * 1000)) 
+      : Date.now() + 999999; 
 
   // Iterem sobre totes les jugades enviades per calcular-ne la puntuació final real
   for (const move of roundMoves) {
@@ -289,17 +326,16 @@ export const finalizeRound = async (gameId: string, masterMove: PlayerMove) => {
       currentParticipants[pid].totalScore = newTotal;
 
       // Guardar el resultat calculat dins de l'array d'arxiu
-      // FIX: Save as 'isValid' to match types.ts
       const processedMove = {
           ...move,
           score: finalScore,
-          isValid: (isChosenMasterMove || (result.isValid && !isLate)), // Renamed from 'valid' to 'isValid'
-          error: error || null // Convert undefined to null to avoid Firebase crash
+          isValid: (isChosenMasterMove || (result.isValid && !isLate)), 
+          error: error || null 
       };
       processedRoundMoves.push(processedMove);
-
-      // Guardar el resultat calculat a la ronda (per persistència)
-      updates[`games/${gameId}/rounds/${state.round}/results/${pid}`] = processedMove;
+      
+      // NOTE: We no longer save results to `games/${gameId}/rounds/${state.round}/results/${pid}` 
+      // to simplify structure. History is the source of truth.
   }
 
   // 2. Aplicar Jugada Mestra al Tauler
@@ -381,5 +417,4 @@ export const finalizeRound = async (gameId: string, masterMove: PlayerMove) => {
 export const resetGame = async (gameId: string) => {
     await remove(ref(db, `games/${gameId}`));
     await remove(ref(db, `publicGames/${gameId}`));
-    window.location.href = '/';
 };
